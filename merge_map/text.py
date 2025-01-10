@@ -104,31 +104,22 @@ def main(args=None):
 if __name__ == '__main__':
     main()
 
-# class MergeMapNode(Node):
-#     def __init__(self):
-#         super().__init__('merge_map_node')
-#         self.publisher = self.create_publisher(OccupancyGrid, '/merge_map', 10)
 
-#         self.subscriptions2 = []
-#         for i in range(n):
-#             topic_name = f'/{maps_list[i]}'
-#             callback_name = f'{maps_list[i]}_callback'
-#             #self_callback = getattr(self, callback_name)
-#             # setattr(self, f'subscription', self.create_subscription(
-#             #     OccupancyGrid, 
-#             #     topic_name, 
-#             #     lambda msg: self.map_callback(msg, i), 10))
-            
-#             self.subscriptions2.append(self.create_subscription(
-#                 OccupancyGrid, topic_name, 
-#                 lambda msg: self.map_callback(msg, i), 10))
-#             setattr(self, maps_list[i], None)
-#             self.get_logger().info('##################################################')
+                # if rotated_map_data[i, j] == -1:  
+                #     surrounding_indices = [
+                #         (i, j),                      
+                #         (i - 1, j),                  
+                #         (i + 1, j),                 
+                #         (i, j - 1),                 
+                #         (i, j + 1),                
+                #     ]
 
-#     def map_callback(self, msg, map_id):
-#         self.get_logger().info('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
-#         self.get_logger().info(f"map_id:{map_id}")
-#         setattr(self, maps_list[map_id], msg)
-#         if all(getattr(self, maps_list[i]) is not None for i in range(n) if i != map_id):
-#             
-#             self.publisher.publish(merged_msg)
+                #     zero_count = 0  
+                #     for new_i, new_j in surrounding_indices:
+                #         if 0 <= new_i < height and 0 <= new_j < width:
+                #             value = rotated_map_data[new_i, new_j]
+                #             if value == 0:  
+                #                 zero_count += 1
+
+                #     if zero_count >= 3:
+                #         rotated_map_data[i, j] = 0
