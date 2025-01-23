@@ -101,25 +101,49 @@ def main(args=None):
     merge_map_node.destroy_node()
     rclpy.shutdown()
 
+
 if __name__ == '__main__':
     main()
 
+def merge_two_maps(map0, map1):
+    merged_map = OccupancyGrid()
+    merged_map.header = map0.header
+    merged_map.header.frame_id = 'map'
+    
+    min_x = min(map0.info.origin.position.x, map1.info.origin.position.x)
+    min_y = min(map0.info.origin.position.y, map1.info.origin.position.y)
+    
+    max_x = max(map0.info.origin.position.x + (map0.info.width * map0.info.resolution),
+                 map1.info.origin.position.x + (map1.info.width * map1.info.resolution))
+    
+    max_y = max(map0.info.origin.position.y + (map0.info.height * map0.info.resolution),
+                 map1.info.origin.position.y + (map1.info.height * map1.info.resolution))
+    
+    merged_map.info.origin.position.x = min_x
+    merged_map.info.origin.position.y = min_y
+    merged_map.info.resolution = min(map0.info.resolution, map1.info.resolution)
+    merged_map.info.width = int(np.ceil((max_x - min_x) / merged_map.info.resolution))
+    merged_map.info.height = int(np.ceil((max_y - min_y) / merged_map.info.resolution))
+    
+    merged_map.data = [-1] * (merged_map.info.width * merged_map.info.height)
+    
+    for y in range(map0.info.height):
+        for x in range(map0.info.width):
+            i = x + y * map0.info.width
+            merged_x = int(np.floor((map0.info.origin.position.x + x * map0.info.resolution - min_x) / merged_map.info.resolution))
+            merged_y = int(np.floor((map0.info.origin.position.y + y * map0.info.resolution - min_y) / merged_map.info.resolution))
+            merged_i = merged_x + merged_y * merged_map.info.width
+            merged_map.data[merged_i] = int(0.5 * map0.data[i])
+    
+    for y in range(map1.info.height):
+        for x in range(map1.info.width):
+            i = x + y * map1.info.width
+            merged_x = int(np.floor((map1.info.origin.position.x + x * map1.info.resolution - min_x) / merged_map.info.resolution))
+            merged_y = int(np.floor((map1.info.origin.position.y + y * map1.info.resolution - min_y) / merged_map.info.resolution))
+            merged_i = merged_x + merged_y * merged_map.info.width
+            if merged_map.data[merged_i] == -1:
+                merged_map.data[merged_i] = int(0.5 * map1.data[i])
+            else:
+                merged_map.data[merged_i] = int(merged_map.data[merged_i] + 0.5 * map1.data[i])
 
-                # if rotated_map_data[i, j] == -1:  
-                #     surrounding_indices = [
-                #         (i, j),                      
-                #         (i - 1, j),                  
-                #         (i + 1, j),                 
-                #         (i, j - 1),                 
-                #         (i, j + 1),                
-                #     ]
-
-                #     zero_count = 0  
-                #     for new_i, new_j in surrounding_indices:
-                #         if 0 <= new_i < height and 0 <= new_j < width:
-                #             value = rotated_map_data[new_i, new_j]
-                #             if value == 0:  
-                #                 zero_count += 1
-
-                #     if zero_count >= 3:
-                #         rotated_map_data[i, j] = 0
+    return merged_map
