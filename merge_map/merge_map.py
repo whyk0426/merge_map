@@ -1,6 +1,8 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
+from sklearn.cluster import DBSCAN
+from collections import defaultdict
 import numpy as np
 import math
 import copy
@@ -31,7 +33,7 @@ class MergeMapNode(Node):
     def figure_out_diff(self, *maps):
         self.map_data = {k: {'r_diff': [], 'theta_diff': [], 'x_diff': [], 'y_diff': []} for k in range(len(maps))}
         for k in range(len(maps)):
-            map_copy = copy.deepcopy(maps[k])
+            map_copy = self.cluster_map(copy.deepcopy(maps[k]))       
             setattr(self, f'map_copy{k}', map_copy)
 
             robot_x = - map_copy.info.origin.position.x
@@ -39,27 +41,26 @@ class MergeMapNode(Node):
 
             filtered_data = [-1] * len(map_copy.data)
 
-            for y in range(maps[k].info.height):
-                for x in range(maps[k].info.width):
-                    i = x + y * maps[k].info.width
+            for y in range(map_copy.info.height):
+                for x in range(map_copy.info.width):
+                    i = x + y * map_copy.info.width
 
-                    x_diff = round(x * maps[k].info.resolution - robot_x, 2)
-                    y_diff = round(y * maps[k].info.resolution - robot_y, 2)
+                    x_diff = round(x * map_copy.info.resolution - robot_x, 2)
+                    y_diff = round(y * map_copy.info.resolution - robot_y, 2)
                     theta_diff = round(math.atan2(y_diff, x_diff), 3)
                     r_diff = round(math.sqrt(x_diff**2 + y_diff**2), 3)
 
-                    if ((maps[k].data[i] > 60) and (r_diff < 0.9)):
+                    if ((map_copy.data[i] > 65)):
                         filtered_data[i] = map_copy.data[i]
 
                         self.map_data[k]['r_diff'].append(r_diff)
                         self.map_data[k]['theta_diff'].append(theta_diff)
                         self.map_data[k]['x_diff'].append(x_diff)
                         self.map_data[k]['y_diff'].append(y_diff)
-            
-            self.get_logger().info('################################################')
+
             self.get_logger().info(f"map_data[{k}]['r_diff']: {self.map_data[k]['r_diff']}, ['theta_diff']: {self.map_data[k]['theta_diff']}")
+
             map_copy.data = filtered_data
-        
             self.matched_data = {k: {'r_diff': [], 'theta_diff': [], 'x_diff': [], 'y_diff': [], 'base_theta_diff': []} for k in range(len(self.map_data))}
 
             if (k == 0):
@@ -67,6 +68,9 @@ class MergeMapNode(Node):
                 self.xd[0] = 0
                 self.yd[0] = 0
             else:
+                best_map_unified = -1
+                best_theta, best_xd, best_yd = None, None, None 
+
                 for i, r_parent in enumerate(self.map_data[0]['r_diff']):
                     for compare_k in range(len(self.map_data)): 
                         for j, r_child in enumerate(self.map_data[compare_k]['r_diff']):
@@ -85,64 +89,157 @@ class MergeMapNode(Node):
                         self.get_logger().info(f"theta0, theta1: { - self.matched_data[compare_k]['base_theta_diff'][n]}, { - self.matched_data[compare_k]['theta_diff'][n]}")
                         
                         map_unified = self.merge_two_maps(map_parent, map_child)
-
-                        if (map_unified > 60):
+         
+                        if (map_unified > 65):
                             self.get_logger().info(f'!!!!SUCCESS!!!! {map_unified}')
 
-                            theta_1to0 = self.matched_data[compare_k]['theta_diff'][n] - self.matched_data[compare_k]['base_theta_diff'][n]
-                            if (theta_1to0 >= 0):
-                                self.theta[compare_k] = round(theta_1to0 - PI, 2)
-                            else:
-                                self.theta[compare_k] = round(theta_1to0 + PI, 2)
-                            self.xd[compare_k] = self.matched_data[compare_k]['x_diff'][n]
-                            self.yd[compare_k] = self.matched_data[compare_k]['y_diff'][n]
-                            continue
+                            if (map_unified > best_map_unified):
+                                best_map_unified = map_unified
+
+                                theta_1to0 = self.matched_data[compare_k]['theta_diff'][n] - self.matched_data[compare_k]['base_theta_diff'][n]
+                                if (theta_1to0 >= 0):
+                                    best_theta = round(theta_1to0 - PI, 2)
+                                else:
+                                    best_theta = round(theta_1to0 + PI, 2)
+                                best_xd = self.matched_data[compare_k]['x_diff'][n]
+                                best_yd = self.matched_data[compare_k]['y_diff'][n]
                         
-                        else:
-                            self.get_logger().info(f'????FAIL???? {map_unified}')
+                if (best_map_unified != -1):
+                    self.theta[compare_k] = best_theta
+                    self.xd[compare_k] = best_xd
+                    self.yd[compare_k] = best_yd
+                    self.get_logger().info('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
+                    self.get_logger().info(f'theta:{self.theta}')
+                    self.get_logger().info(f'   xd:{self.xd}')
+                    self.get_logger().info(f'   yd:{self.yd}')
 
 
+    def cluster_map(self, map_data):
+        points = []
+        width = map_data.info.width
+        height = map_data.info.height
+        eps = 40 * map_data.info.resolution
 
-        self.get_logger().info('@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@')
-        self.get_logger().info(f'theta:{self.theta}')
-        self.get_logger().info(f'   xd:{self.xd}')
-        self.get_logger().info(f'   yd:{self.yd}')
+        for y in range(height):
+            for x in range(width):
+                index = y * width + x
+                if map_data.data[index] >= 65:
+                    points.append((x, y))
+
+        points = np.array(points)
+
+        if len(points) == 0:
+            for y in range(height):
+                for x in range(width):
+                    index = y * width + x
+                    map_data.data[index] = -1
+            return map_data
+        
+        dbscan = DBSCAN(eps=eps, min_samples=1)
+        labels = dbscan.fit_predict(points)
+
+        cluster_sizes = {}
+        for label in set(labels):
+            if label == -1:
+                continue  
+            cluster_sizes[label] = (labels == label).sum()
+            self.get_logger().info(f'Cluster {label}: Size = {cluster_sizes[label]}')  
+
+        for label, size in cluster_sizes.items():
+            if size >= 5:
+                for (x, y), cluster_label in zip(points, labels):
+                    if cluster_label == label:
+                        index = y * width + x
+                        map_data.data[index] = -1
+
+        occupied_indicates = {y * width + x for x, y in points}
+        for y in range(height):
+            for x in range(width):
+                index = y * width + x
+                if index not in occupied_indicates:
+                    map_data.data[index] = -1
+        return map_data
   
 
-    def rotate_map(self, map_data, angle):
-        robot_x = - map_data.info.origin.position.x
-        robot_y = - map_data.info.origin.position.y
+    def rotate_map(self, map_data, angle, new_resolution=None):
+        robot_x = -map_data.info.origin.position.x
+        robot_y = -map_data.info.origin.position.y
         height = map_data.info.height
         width = map_data.info.width
-        resolution = map_data.info.resolution
+        old_resolution = map_data.info.resolution
 
-        rotated_map_data = [-1] * (height * width)
+        if new_resolution is None:
+            new_resolution = 0.5 * old_resolution  
 
-        cos_th = np.cos(-angle) 
+        scale_factor = old_resolution / new_resolution  
+        new_height = int(height * scale_factor)  
+        new_width = int(width * scale_factor)    
+
+        rotated_map_data = [-1] * (new_height * new_width)
+
+        cos_th = np.cos(-angle)
         sin_th = np.sin(-angle)
 
-        for i in range(height):
-            for j in range(width):
-                rotated_x = j * resolution
-                rotated_y = i * resolution
+        for i in range(new_height):
+            for j in range(new_width):
+                rotated_x = j * new_resolution
+                rotated_y = i * new_resolution
 
                 orig_x = cos_th * (rotated_x - robot_x) - sin_th * (rotated_y - robot_y) + robot_x
                 orig_y = sin_th * (rotated_x - robot_x) + cos_th * (rotated_y - robot_y) + robot_y
 
-                orig_j = int(np.floor(orig_x / resolution))
-                orig_i = int(np.floor(orig_y / resolution))
+                orig_j = int(np.floor(orig_x / old_resolution))
+                orig_i = int(np.floor(orig_y / old_resolution))
 
                 if 0 <= orig_i < height and 0 <= orig_j < width:
-                    rotated_index = i * width + j
+                    rotated_index = i * new_width + j
                     orig_index = orig_i * width + orig_j
                     rotated_map_data[rotated_index] = map_data.data[orig_index]
 
         rotated_map_msg = OccupancyGrid()
         rotated_map_msg.header = map_data.header
-        rotated_map_msg.info = map_data.info
+        rotated_map_msg.info = copy.deepcopy(map_data.info)
+        rotated_map_msg.info.resolution = new_resolution  
+        rotated_map_msg.info.width = new_width
+        rotated_map_msg.info.height = new_height
         rotated_map_msg.data = rotated_map_data
 
         return rotated_map_msg
+
+    # def rotate_map(self, map_data, angle):
+    #     robot_x = - map_data.info.origin.position.x
+    #     robot_y = - map_data.info.origin.position.y
+    #     height = map_data.info.height
+    #     width = map_data.info.width
+    #     resolution = map_data.info.resolution
+
+    #     rotated_map_data = [-1] * (height * width)
+
+    #     cos_th = np.cos(-angle) 
+    #     sin_th = np.sin(-angle)
+
+    #     for i in range(height):
+    #         for j in range(width):
+    #             rotated_x = j * resolution
+    #             rotated_y = i * resolution
+
+    #             orig_x = cos_th * (rotated_x - robot_x) - sin_th * (rotated_y - robot_y) + robot_x
+    #             orig_y = sin_th * (rotated_x - robot_x) + cos_th * (rotated_y - robot_y) + robot_y
+
+    #             orig_j = int(np.floor(orig_x / resolution))
+    #             orig_i = int(np.floor(orig_y / resolution))
+
+    #             if 0 <= orig_i < height and 0 <= orig_j < width:
+    #                 rotated_index = i * width + j
+    #                 orig_index = orig_i * width + orig_j
+    #                 rotated_map_data[rotated_index] = map_data.data[orig_index]
+
+    #     rotated_map_msg = OccupancyGrid()
+    #     rotated_map_msg.header = map_data.header
+    #     rotated_map_msg.info = map_data.info
+    #     rotated_map_msg.data = rotated_map_data
+
+    #     return rotated_map_msg
 
 
     def merge_two_maps(self, map0, map1):
@@ -167,6 +264,8 @@ class MergeMapNode(Node):
         
         merged_map.data = [-1] * (merged_map.info.width * merged_map.info.height)
         
+        size_of_data = 0
+
         for y in range(map0.info.height):
             for x in range(map0.info.width):
                 i = x + y * map0.info.width
@@ -186,9 +285,10 @@ class MergeMapNode(Node):
                 else:
                     merged_map.data[merged_i] = int(merged_map.data[merged_i] + 0.5 * map1.data[i])
 
-        max_value = max(merged_map.data)
-
-        return max_value
+                if (merged_map.data[merged_i] > 60):
+                    size_of_data = size_of_data + merged_map.data[merged_i]
+                    
+        return size_of_data
     
     
     def merge_maps(self, *maps):
